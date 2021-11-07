@@ -4,7 +4,7 @@ A Small implementation of binary reduction in python.
 
 Should use Python 3.9 or higher.
 
-## If used please Cite
+**If you find it usefull, please cite the paper:**
 
 > Christian Gram Kalhauge and Jens Palsberg. 2021. Logical bytecode reduction. In
 > Proceedings of the 42nd ACM SIGPLAN International Conference on Programming
