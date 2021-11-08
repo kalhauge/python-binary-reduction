@@ -18,24 +18,28 @@ def binary_reduction(
 
     >>> binary_reduction(
     ...     set(range(0,10)), 
-    ...     debug_predicate(lambda x: x >= {3, 4}), 
+    ...     debug_range_predicate(10, lambda x: x >= {3, 8}), 
     ...     debug_progression(dumb_progression)
     ... )
     == Progression 0
+    == I = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     == L = [], D = [[], [0], [1], [2], [3], [4], [5], [6], [7], [8], [9]]
-    0 [] False
-    1 [0, 1, 2, 3, 4] True
-    2 [0, 1] False
-    3 [0, 1, 2, 3] False
+    00 - .......... - False
+    01 - XXXXX..... - False
+    02 - XXXXXXXX.. - False
+    03 - XXXXXXXXX. - True
     == Progression 1
-    == L = [[4]], D = [[4], [0], [1], [2], [3]]
-    4 [4] False
-    5 [0, 1, 4] False
-    6 [0, 1, 2, 4] False
+    == I = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    == L = [[8]], D = [[8], [0], [1], [2], [3], [4], [5], [6], [7]]
+    04 - ........X. - False
+    05 - XXXX....X. - True
+    06 - XX......X. - False
+    07 - XXX.....X. - False
     == Progression 2
-    == L = [[3], [4]], D = [[3, 4], [0], [1], [2]]
-    7 [3, 4] True
-    frozenset({3, 4})
+    == I = [0, 1, 2, 3, 8]
+    == L = [[3], [8]], D = [[8, 3], [0], [1], [2]]
+    08 - ...X....X. - True
+    {8, 3}
 
     Parameters
     ----------
@@ -50,7 +54,10 @@ def binary_reduction(
 
     Returns
     -------
-    A small set of variables that make the predicate true.
+    A small set of variables that make the predicate true. 
+    OBS: the predicate might not be true on the returned set if the predicate is 
+    not monotonic or is flaky. To make sure; run the predicate on result.
+
 
     """
     learned_sets = set()
@@ -64,7 +71,83 @@ def binary_reduction(
         learned_sets.add(d[r])
         d = list(progression(frozenset(learned_sets), prefix_union(d, r)))
 
-    return d[0];
+    return set(d[0]);
+
+def delta_debugging(
+        input : Set[V], 
+        predicate : Callable[[Set[V]], bool], 
+        # progression : Callable[[Iterable[Set[V]], Iterable[V]], Iterator[Set[V]]],
+        ) -> Set[V]:
+    """ The seminal implementation of delta_debugging. 
+
+    >>> delta_debugging(
+    ...     set(range(0,10)), 
+    ...     debug_range_predicate(10, lambda x: x >= {3, 8}), 
+    ... )
+    00 - .....XXXXX - False
+    01 - XXXXX..... - False
+    02 - ..XXXXXXXX - True
+    03 - ....XXXXXX - False
+    04 - ..XX...XXX - True
+    05 - .......XXX - False
+    06 - ..XX...... - False
+    07 - ...X...XXX - True
+    08 - .......XXX - False
+    09 - ...X....XX - True
+    10 - ........XX - False
+    11 - ...X...... - False
+    12 - ........XX - False
+    13 - ...X.....X - False
+    14 - ...X....X. - True
+    15 - ........X. - False
+    16 - ...X...... - False
+    {8, 3}
+    
+    Code borrowed from:
+    "Reducing Failure-Inducing Inputs" - a chapter of "The Fuzzing Book"
+    Web site: https://www.fuzzingbook.org/html/Reducer.html
+    
+    Parameters
+    ----------
+    input : Set[V]
+        A set of input variables
+
+    predicate : Set[V] -> bool
+        A function that returns true or false depending on the input set.
+
+    Returns
+    -------
+    A small set of variables that make the predicate true. 
+    OBS: the predicate might not be true on the returned set if the predicate is 
+    not monotonic or is flaky. To make sure; run the predicate on result.
+
+    """
+    inp = list(input)
+
+    n = 2     # Initial granularity
+    while len(inp) >= 2:
+        start = 0
+        subset_length = len(inp) / n
+        some_complement_is_failing = False
+
+        while start < len(inp):
+            complement = inp[:int(start)] + inp[int(start + subset_length):]
+
+            if predicate(set(complement)):
+                inp = complement
+                n = max(n - 1, 2)
+                some_complement_is_failing = True
+                break
+
+            start += subset_length
+
+        if not some_complement_is_failing:
+            if n == len(inp):
+                break
+            n = min(n * 2, len(inp))
+
+    return set(inp)
+
 
 def debug_predicate(fn, max_iterations=None): 
     """ Debug a predicate """
@@ -74,6 +157,22 @@ def debug_predicate(fn, max_iterations=None):
         if max_iterations and counter >= max_iterations: 
             raise Exception("Out of invocations of the predicate")
         print(counter, list(x), (res := fn(x)))
+        counter += 1
+        return res
+
+    return predicate;
+
+def debug_range_predicate(n, fn, max_iterations=None): 
+    """ Debug a predicate, but expect the input to the predicate to be a set of
+    integers in a range."""
+    counter = 0
+    def predicate(x):
+        nonlocal counter
+        if max_iterations and counter >= max_iterations: 
+            raise Exception("Out of invocations of the predicate")
+        res = fn(x)
+        bar = ''.join("X" if i in x else "." for i in range(n))
+        print(f'{counter:02} - {bar} - {res}')
         counter += 1
         return res
 
@@ -271,16 +370,17 @@ def graph_progression(graph : Graph):
     ...     debug_progression(graph_progression(example_1))
     ... )
     == Progression 0
+    == I = []
     == L = [], D = [[], [7], [8, 9, 10, 11, 12, 13, 14], [16, 15], [4], [2], [1], [3], [5, 6], [0]]
     0 [] False
-    1 [4, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] False
+    1 [2, 4, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] False
     2 [1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] True
     3 [1, 2, 4, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] True
-    4 [2, 4, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] False
     == Progression 1
-    == L = [[1]], D = [[1, 2, 4, 7]]
-    5 [1, 2, 4, 7] True
-    frozenset({1, 2, 4, 7})
+    == I = [1, 2, 4, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    == L = [[1]], D = [[1, 2, 4, 7], [8, 9, 10, 11, 12, 13, 14], [16, 15]]
+    4 [1, 2, 4, 7] True
+    {1, 2, 4, 7}
 
     And, for a bug in {1, 12}:
 
@@ -305,7 +405,7 @@ def graph_progression(graph : Graph):
     == I = [1, 2, 4, 7, 8, 9, 10, 11, 12, 13, 14]
     == L = [[8, 9, 10, 11, 12, 13, 14], [1]], D = [[1, 2, 4, 7, 8, 9, 10, 11, 12, 13, 14]]
     6 [1, 2, 4, 7, 8, 9, 10, 11, 12, 13, 14] True
-    frozenset({1, 2, 4, 7, 8, 9, 10, 11, 12, 13, 14})
+    {1, 2, 4, 7, 8, 9, 10, 11, 12, 13, 14}
 
     """
     import itertools
